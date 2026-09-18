@@ -198,6 +198,40 @@
       <span id="notice"></span>
     </div>
     <ul class="log" id="log"><li class="empty">Sin pedidos registrados todavía.</li></ul>
+
+    <h2>Análisis <small>(historial completo, no solo los últimos 50)</small></h2>
+    <span class="hint">Se guarda en SQLite (<code>Rulo/Spotify/spotify-analytics.db</code>): cada comentario que pidió música, cómo lo entendió el bot, qué contestó y si en eso participó la IA. Sirve para ver qué falla y entrenarlo mejor. Los números son del período elegido.</span>
+    <div class="card">
+      <div class="chips">
+        <span class="chip" id="anTotal">Interacciones: <strong>—</strong></span>
+        <span class="chip" id="anPedidos">Pedidos: <strong>—</strong></span>
+        <span class="chip" id="anPlayed">Reproducidas: <strong>—</strong></span>
+        <span class="chip" id="anNotFound">No encontradas: <strong>—</strong></span>
+        <span class="chip" id="anWait">Con espera: <strong>—</strong></span>
+        <span class="chip" id="anIa">Con IA: <strong>—</strong></span>
+        <span class="chip" id="anBase">Base: <strong>—</strong></span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <select id="anDias" style="flex:0 0 auto;width:auto">
+          <option value="1">Hoy</option>
+          <option value="7" selected>Últimos 7 días</option>
+          <option value="30">Últimos 30 días</option>
+          <option value="365">Último año</option>
+        </select>
+        <button class="small secondary" id="btnAn" type="button">Ver análisis</button>
+        <button class="small secondary" id="btnAnCsv" type="button">Descargar CSV</button>
+      </div>
+      <div class="grid" style="margin-top:12px">
+        <div class="card">
+          <h3>Lo que pidieron y no se encontró <small>(para entrenar el parser)</small></h3>
+          <ul class="log" id="anNoEncontradas"><li class="empty">Sin datos todavía.</li></ul>
+        </div>
+        <div class="card">
+          <h3>Lo más pedido</h3>
+          <ul class="log" id="anTop"><li class="empty">Sin datos todavía.</li></ul>
+        </div>
+      </div>
+    </div>
   </main>
   <script>
     (function () {
@@ -531,6 +565,57 @@
       });
 
       refresh();
+      // --- Analisis (SQLite) ---
+      function chipAnalisis(id, etiqueta, valor, estado) {
+        const node = el(id);
+        if (!node) return;
+        node.className = 'chip' + (estado ? ' is-' + estado : '');
+        node.innerHTML = etiqueta + ': <strong>' + esc(valor) + '</strong>';
+      }
+
+      function renderAnalisis(data) {
+        const a = (data && data.analytics) || null;
+        if (!a) {
+          chipAnalisis('anBase', 'Base', 'no disponible', 'bad');
+          return;
+        }
+        chipAnalisis('anTotal', 'Interacciones', a.total);
+        chipAnalisis('anPedidos', 'Pedidos', a.pedidos);
+        chipAnalisis('anPlayed', 'Reproducidas', a.reproducidas, a.reproducidas ? 'ok' : '');
+        chipAnalisis('anNotFound', 'No encontradas', a.noEncontradas, a.noEncontradas ? 'warn' : 'ok');
+        chipAnalisis('anWait', 'Con espera', a.rechazadas);
+        chipAnalisis('anIa', 'Con IA (interpretó', a.conIaInterpretando + ' / respondió ' + a.conIaRespondiendo + ')', a.conIaCualquiera ? 'ok' : '');
+        chipAnalisis('anBase', 'Base', (a.filePath || '').split(/[\\/]/).pop() || 'sqlite', a.total ? 'ok' : '');
+        const noEncontradas = (a.noEncontradasDetalle || []).slice(0, 8);
+        el('anNoEncontradas').innerHTML = noEncontradas.length
+          ? noEncontradas.map(item => '<li class="log-item fail"><span class="msg">' + esc(item.comment || item.query || '') + '</span><time>' + esc(new Date(item.iso || Date.now()).toLocaleString()) + '</time></li>').join('')
+          : '<li class="empty">Nada sin encontrar en este período.</li>';
+        const top = []
+          .concat((a.topPedidosRepetidos || []).map(item => ({ texto: item.comment, veces: item.n })))
+          .concat((a.topArtistas || []).map(item => ({ texto: item.artist, veces: item.n })))
+          .slice(0, 8);
+        el('anTop').innerHTML = top.length
+          ? top.map(item => '<li class="log-item ok"><span class="msg">' + esc(item.texto) + '</span><time>' + esc(item.veces) + '×</time></li>').join('')
+          : '<li class="empty">Sin datos todavía.</li>';
+      }
+
+      function cargarAnalisis() {
+        const dias = el('anDias').value || '7';
+        return fetch('/api/spotify-analytics?dias=' + encodeURIComponent(dias), { cache: 'no-store' })
+          .then(response => response.json())
+          .then(renderAnalisis)
+          .catch(() => null);
+      }
+
+      el('btnAn').addEventListener('click', cargarAnalisis);
+      el('anDias').addEventListener('change', cargarAnalisis);
+      el('btnAnCsv').addEventListener('click', () => {
+        const dias = el('anDias').value || '7';
+        window.open('/api/spotify-analytics.csv?dias=' + encodeURIComponent(dias), '_blank');
+      });
+
+      refresh();
+      cargarAnalisis();
       setInterval(refresh, 2500);
     }());
   </script>

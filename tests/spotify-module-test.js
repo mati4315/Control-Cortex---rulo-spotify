@@ -645,6 +645,48 @@ async function waitFor(predicate, timeoutMs, stepMs) {
     dom.window.close();
   }
 
+  // ---------- P) lo que se reporta para el analisis (SQLite) ----------
+  {
+    const RESPONSES = {
+      random: true,
+      avoidRepeat: true,
+      recent: 4,
+      contexts: {
+        ok: { label: 'ok', variants: ['FABRICA {nombre}: {tema}', 'DE-LA-IA {nombre}: {tema}'], aiVariants: ['DE-LA-IA {nombre}: {tema}'] },
+        searching: { label: 'buscando', variants: ['Buscando {busqueda}...'] },
+        notFound: { label: 'no', variants: ['NO-ESTA {pedido}'] }
+      }
+    };
+    // El buscador simulado devuelve null para "zzz": asi se prueba el caso no encontrado.
+    const { dom, integration, state } = loadModule({ search: consulta => (/zzz/i.test(consulta) ? null : TRACK) });
+    await integration.syncSpotifySettings();
+    const base = integration.getVocabulary();
+    integration.cortexSpotifyVocabulary = Object.assign({}, base, { responses: RESPONSES });
+
+    await integration.handleCommand('!tema Amar Azul', { chatname: 'Mati', type: 'youtube', userid: 'u-77' });
+    const reporte = cortexCall(state, '/api/spotify-request-log').pop().body;
+    check('reporte: manda el comentario original', reporte.comment === '!tema Amar Azul', JSON.stringify(reporte.comment));
+    check('reporte: manda la plataforma y el id del que pidio', reporte.platform === 'youtube' && reporte.requesterId === 'u-77', JSON.stringify({ platform: reporte.platform, id: reporte.requesterId }));
+    check('reporte: manda el estado del pedido', reporte.status === 'played', reporte.status);
+    check('reporte: manda la respuesta que dio el bot', /FABRICA|DE-LA-IA/.test(String(reporte.reply && reporte.reply.text)), JSON.stringify(reporte.reply));
+    check('reporte: manda de que contexto salio la respuesta', reporte.reply && reporte.reply.context === 'ok', JSON.stringify(reporte.reply && reporte.reply.context));
+    check('reporte: manda la variante usada', typeof (reporte.reply && reporte.reply.variant) === 'string' && reporte.reply.variant.length > 5, JSON.stringify(reporte.reply && reporte.reply.variant));
+    check('reporte: dice si la respuesta era de la IA', reporte.reply && typeof reporte.reply.ai === 'boolean' && reporte.reply.ai === (RESPONSES.contexts.ok.aiVariants.indexOf(reporte.reply.variant) !== -1), JSON.stringify(reporte.reply));
+    check('reporte: dice si lo interpreto la IA (aca no)', reporte.aiInterpreted === false, JSON.stringify(reporte.aiInterpreted));
+    check('reporte: manda el pedido tal como se leyo', reporte.parsed && reporte.parsed.query === 'amar azul', JSON.stringify(reporte.parsed));
+
+    // Un pedido que no se encuentra: estado notfound y el motivo.
+    state.settings = { ...state.settings, testMode: true };
+    await integration.syncSpotifySettings();
+    integration.cortexSpotifyVocabulary = Object.assign({}, base, { responses: RESPONSES });
+    const noEsta = await integration.handleCommand('!tema Zzz No Existe', { chatname: 'Sofi', type: 'tiktok' });
+    const reporte2 = cortexCall(state, '/api/spotify-request-log').pop().body;
+    check('reporte: el pedido no encontrado queda marcado', reporte2.status === 'notfound' && /NO-ESTA/.test(String(reporte2.reply.text)), JSON.stringify({ status: reporte2.status, reply: reporte2.reply.text }));
+    check('reporte: avisa que el que pidio era de otra plataforma', reporte2.platform === 'tiktok', reporte2.platform);
+    check('reporte: y no mezcla el comentario del pedido anterior', reporte2.comment === '!tema Zzz No Existe', JSON.stringify(reporte2.comment));
+    dom.window.close();
+  }
+
   // ---------- Resultado ----------
 
   // ---------- Resultado ----------

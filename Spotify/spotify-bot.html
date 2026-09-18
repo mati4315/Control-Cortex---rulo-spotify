@@ -97,7 +97,8 @@
     </div>
 
     <h2>Respuestas del bot / Rulo</h2>
-    <span class="hint">Una respuesta por línea. Los datos entre llaves se completan solos: <code>{nombre}</code> (el que pidió), <code>{tema}</code>, <code>{artista}</code>, <code>{pedido}</code>, <code>{busqueda}</code>, <code>{genero}</code>, <code>{segundos}</code>, <code>{dispositivo}</code>, <code>{accion}</code>, <code>{comando}</code>, <code>{dispositivos}</code>, <code>{entendido}</code>. Si una variante pide un dato que en ese momento no existe, el bot la saltea y elige otra.</span>
+    <span class="hint">Una respuesta por línea. Los datos entre llaves se completan solos: <code>{nombre}</code> (el que pidió), <code>{tema}</code>, <code>{artista}</code>, <code>{pedido}</code>, <code>{busqueda}</code>, <code>{genero}</code>, <code>{segundos}</code>, <code>{dispositivo}</code>, <code>{accion}</code>, <code>{comando}</code>, <code>{dispositivos}</code>, <code>{entendido}</code>. Si una variante pide un dato que en ese momento no existe, el bot la saltea y elige otra.<br>
+    El botón <strong>Generar 3 con IA</strong> usa el cerebro: se activa, se le pone el endpoint y el modelo en <a href="/rulo-spotify-training.html#cerebro" style="color:var(--accent)">Entrenamiento → Cerebro (IA)</a>, y la clave va en <code>Control Cortex/backend/.env</code> como <code>SPOTIFY_AI_API_KEY</code>.</span>
     <div class="card" style="margin-bottom:14px">
       <div class="row">
         <label style="flex:0 0 auto"><input type="checkbox" id="respRandom"> Elegir al azar</label>
@@ -181,6 +182,8 @@
             const value = data[key];
             return value === undefined || value === null ? '' : String(value);
           })
+          // Si quedo una llave desconocida, se saca (nunca se muestra en el chat).
+          .replace(/\{[^}]{0,60}\}/g, '')
           .replace(/\s+([,.;:!?])/g, '$1')
           .replace(/\(\s*\)/g, '')
           .replace(/\s{2,}/g, ' ')
@@ -252,6 +255,12 @@
         el('respRecent').value = responses.recent === undefined ? 4 : responses.recent;
       }
 
+      function contadorDe(bloque) {
+        const variantes = (bloque && bloque.variants) || [];
+        const deIa = (bloque && bloque.aiVariants) || [];
+        return variantes.length + ' respuesta(s)' + (deIa.length ? ' · ' + deIa.length + ' con IA' : '');
+      }
+
       function contextCard(meta) {
         const block = ((state.vocabulary.responses || {}).contexts || {})[meta.id] || { variants: [] };
         const variants = Array.isArray(block.variants) ? block.variants : [];
@@ -260,7 +269,7 @@
           '<div class="card" data-context-card="' + esc(meta.id) + '">' +
             '<div class="row" style="justify-content:space-between">' +
               '<h3>' + esc(meta.label) + '</h3>' +
-              '<span class="count" data-context-count="' + esc(meta.id) + '">' + variants.length + ' respuesta(s)</span>' +
+              '<span class="count" data-context-count="' + esc(meta.id) + '">' + esc(contadorDe(block)) + '</span>' +
             '</div>' +
             '<div class="row" style="gap:6px;margin:6px 0 8px"><span class="mood">' + esc(meta.mood || '') + '</span>' + placeholders + '</div>' +
             '<textarea data-context="' + esc(meta.id) + '" rows="' + Math.min(10, Math.max(4, variants.length + 1)) + '">' + esc(listToText(variants)) + '</textarea>' +
@@ -325,7 +334,7 @@
               const id = card.getAttribute('data-context-card');
               const block = ((state.vocabulary.responses || {}).contexts || {})[id] || { variants: [] };
               const counter = card.querySelector('[data-context-count]');
-              if (counter) counter.textContent = (block.variants || []).length + ' respuesta(s)';
+              if (counter) counter.textContent = contadorDe(block);
             });
             showNotice('Guardado: la extensión ya lo tiene');
             return data;
@@ -441,13 +450,24 @@
                 box.textContent = (data && data.error) || 'La IA no respondió.';
                 return;
               }
+              // El backend ya las guardo y marco como de IA: aca solo se refleja.
               const node = document.querySelector('[data-context="' + aiId + '"]');
-              const actuales = textToList(node.value);
-              data.variants.forEach(variant => { if (actuales.indexOf(variant) === -1) actuales.push(variant); });
-              node.value = actuales.join('\n');
-              scheduleSave();
+              if (data.vocabulary) {
+                state.vocabulary = data.vocabulary;
+                const bloque = ((state.vocabulary.responses || {}).contexts || {})[aiId] || { variants: [] };
+                node.value = listToText(bloque.variants);
+                const card = document.querySelector('[data-context-card="' + aiId + '"]');
+                const counter = card && card.querySelector('[data-context-count]');
+                if (counter) counter.textContent = contadorDe(bloque);
+                renderChips();
+              } else {
+                const actuales = textToList(node.value);
+                data.variants.forEach(variant => { if (actuales.indexOf(variant) === -1) actuales.push(variant); });
+                node.value = actuales.join('\n');
+                scheduleSave();
+              }
               box.className = 'result ok';
-              box.textContent = 'Agregadas:\n' + data.variants.join('\n');
+              box.textContent = 'Agregadas (marcadas como de IA):\n' + data.variants.join('\n');
             })
             .catch(() => { box.className = 'result fail'; box.textContent = 'No se pudo consultar la IA.'; });
         }

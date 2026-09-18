@@ -2,6 +2,9 @@
 rulo-chat-history.json
 Spotify/spotify-request-log.json
 Spotify/spotify-devices.json
+Spotify/spotify-analytics.db
+Spotify/spotify-analytics.db-wal
+Spotify/spotify-analytics.db-shm
 
 # Dependencias de las pruebas: se reinstalan con "npm install" (ver package-lock.json)
 tests/node_modules/

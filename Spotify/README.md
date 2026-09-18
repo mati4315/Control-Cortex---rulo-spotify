@@ -222,6 +222,43 @@ Las respuestas viven en el bloque `responses` de `Rulo/Spotify/spotify-vocabular
 respuestas de fábrica). El módulo de la extensión las lee en vivo por WebSocket: se cambian y el bot las usa
 sin recargar nada. Si el archivo no tiene el bloque (instalación vieja), el backend lo agrega solo al arrancar.
 
+## Historial de análisis en SQLite (`spotify-analytics.db`)
+
+Todo lo que pasa con los pedidos queda guardado en `Rulo/Spotify/spotify-analytics.db` para poder
+analizarlo después y buscar mejoras. Usa **`node:sqlite`**, que viene dentro de Node: no hay que
+instalar nada.
+
+**Qué guarda (`interactions`)** — una fila por cada comentario que llegó, con:
+
+| Qué | Detalle |
+| --- | --- |
+| Cuándo y en qué sesión | `ts`, `iso`, `session` (cada arranque del backend) |
+| Quién y dónde | `requester`, `requester_id`, `platform` (youtube, tiktok, dashboard…) |
+| **La pregunta** | `comment` (el texto tal cual lo escribió), `is_request` |
+| Cómo lo entendió el bot | `parsed_source` (natural, comando, género, **ia**), `artist`, `title`, `genre`, `query` |
+| Qué pasó | `status` (played, notfound, wait_user, wait_global, busy, no_device, error…), `reason`, `seconds` |
+| **La respuesta** | `reply_text`, `reply_context` (ok, notFound, waitGlobal…), `reply_variant` (qué variante salió), `reply_random` |
+| **Si usó IA** | `ai_interpreted` + `ai_model` (la IA entendió el pedido) y `reply_ai` (la respuesta era una variante escrita por la IA) |
+| La música | `track_name`, `track_artist`, `track_uri` |
+| Cuánto tardó | `duration_ms` |
+
+**Qué guarda (`events`)** — acciones sueltas: `ai_replies` (variantes generadas con IA),
+`vocabulary_saved` (cada cambio de entrenamiento, con los totales), `alias_learned` (correcciones).
+
+**Cómo verlo**
+
+- En el panel de Spotify, sección **Análisis**: números del período (interacciones, pedidos,
+  reproducidas, no encontradas, con espera, con IA) + lo que pidieron y no se encontró + lo más pedido.
+- `GET /api/spotify-analytics?dias=7` → el resumen completo en JSON.
+- `GET /api/spotify-analytics-rows?dias=30&limite=200&estado=notfound` → las filas.
+- `GET /api/spotify-analytics.csv?dias=30` → **CSV** para abrirlo en Excel o Sheets y filtrar a gusto.
+
+Con eso se ve enseguida dónde mejorar: los comentarios que no se encontraron (van derecho a la lista
+de palabras/correcciones), los pedidos repetidos, los horarios y las plataformas.
+
+> La base **no se sube** a GitHub: tiene los comentarios y los nombres del chat. Está en el `.gitignore`
+> del repo y en las exclusiones del subidor.
+
 ## Pruebas automáticas
 
 ```bash
@@ -238,6 +275,10 @@ sin repetir, vista previa, generación con IA y la recarga cuando el archivo cam
 comillas, idempotencia y una migración completa en una carpeta temporal.
 `spotify-files-test.js` prueba la relectura de los JSON de `Rulo/Spotify` (edición externa, guardado
 propio, archivo roto o borrado).
+`spotify-responses-test.js` prueba el módulo de respuestas (normalización, limpieza, marca de IA y
+detección de errores que el proveedor devuelve con status 200).
+`spotify-analytics-test.js` prueba el historial SQLite: guardado, resumen, filas, CSV y que no se
+pierda nada al reabrir.
 
 ## Si actualizás SocialStream Ninja
 

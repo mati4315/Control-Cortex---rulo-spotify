@@ -243,6 +243,22 @@ const posts = (calls, fragment) => calls.filter(call => call.url.indexOf(fragmen
     dom.window.close();
   }
 
+  {
+    // El backend guarda y marca las variantes de la IA: la pagina refleja lo que volvio.
+    const { dom, doc, state } = makePage({});
+    await wait(250);
+    const conIa = JSON.parse(JSON.stringify(state.vocabulary));
+    conIa.responses.contexts.ok.variants = conIa.responses.contexts.ok.variants.concat(['IA-MARCADA {nombre}: {tema}']);
+    conIa.responses.contexts.ok.aiVariants = ['IA-MARCADA {nombre}: {tema}'];
+    doc.querySelector('[data-ai="ok"]').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+    await wait(400);
+    // El mock responde ok con las variantes nuevas y el vocabulario ya guardado.
+    const box = doc.querySelector('[data-result="ok"]');
+    check('bot: avisa que las guardo y las marco', /marcadas como de IA/.test(box.textContent), box.textContent);
+    state.vocabulary = conIa;
+    dom.window.close();
+  }
+
   // ---------- G) restaurar una lista ----------
   {
     const { dom, doc, calls } = makePage({});
