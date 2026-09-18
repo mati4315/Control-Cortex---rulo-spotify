@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "testMode": true,
+  "cooldownSeconds": 40,
+  "userCooldownSeconds": 60,
+  "minTextLength": 8,
+  "requireCommand": false,
+  "personalize": true,
+  "announce": true,
+  "autoContinue": true,
+  "skipEnabled": false,
+  "skipSeconds": 10,
+  "pollSeconds": 7,
+  "deviceTargetName": "Web Player (Chrome)"
+}

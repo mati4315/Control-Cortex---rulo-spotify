@@ -1,0 +1,15 @@
+# Estado que se genera solo mientras corre el stream (no va al repo)
+rulo-chat-history.json
+Spotify/spotify-request-log.json
+Spotify/spotify-devices.json
+
+# Dependencias de las pruebas: se reinstalan con "npm install" (ver package-lock.json)
+tests/node_modules/
+
+# Ruido de Windows
+desktop.ini
+Thumbs.db
+
+# Secretos: van en Control Cortex/backend/.env, nunca al repo
+.env
+*.env
