@@ -326,9 +326,9 @@
     "variantLimit": 8
   },
   "ai": {
-    "enabled": true,
-    "endpoint": "https://api.deepseek.com/chat/completions",
-    "model": "deepseek-flash",
+    "enabled": false,
+    "endpoint": "http://127.0.0.1:4201/v1/chat/completions",
+    "model": "prueba",
     "instructions": "Entre riano Argentino, contesta muy informal, y corto, es un viejo al mal educado de aveces, sobre todo cuando lo hacen enojar",
     "onlyWhenNotUnderstood": true,
     "requireSignal": true,

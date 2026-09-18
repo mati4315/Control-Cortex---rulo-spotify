@@ -59,7 +59,8 @@ function loadModule(options) {
     aliases: opts.aliases || null,
     vocabulary: opts.vocabulary || null,
     aiInterpretation: opts.aiInterpretation || null,
-    lastSearch: []
+    lastSearch: [],
+    lastLimits: []
   };
 
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -117,10 +118,14 @@ function loadModule(options) {
     // --- Spotify Web API simulada ---
     if (target.indexOf('/v1/search') !== -1) {
       const q = decodeURIComponent((target.split('q=')[1] || '').split('&')[0]);
+      const limite = Number((target.split('limit=')[1] || '3').split('&')[0]) || 3;
       state.lastSearch.push(q);
+      state.lastLimits.push(limite);
       const resolver = opts.search;
       const found = typeof resolver === 'function' ? resolver(q) : TRACK;
-      return jsonResponse({ tracks: { items: found ? [found] : [] } });
+      // El resolver puede devolver un tema, una lista de temas o nada.
+      const items = Array.isArray(found) ? found.slice(0, limite) : (found ? [found] : []);
+      return jsonResponse({ tracks: { items } });
     }
     if (target.indexOf('/me/player/devices') !== -1) {
       return jsonResponse({ devices: [DEVICE] });
@@ -684,6 +689,101 @@ async function waitFor(predicate, timeoutMs, stepMs) {
     check('reporte: el pedido no encontrado queda marcado', reporte2.status === 'notfound' && /NO-ESTA/.test(String(reporte2.reply.text)), JSON.stringify({ status: reporte2.status, reply: reporte2.reply.text }));
     check('reporte: avisa que el que pidio era de otra plataforma', reporte2.platform === 'tiktok', reporte2.platform);
     check('reporte: y no mezcla el comentario del pedido anterior', reporte2.comment === '!tema Zzz No Existe', JSON.stringify(reporte2.comment));
+    dom.window.close();
+  }
+
+  // ---------- P2) respuestas: no repite la anterior ni con la ventana llena ----------
+  {
+    // Contexto "ok" con solo dos variantes y ventana de 4: la memoria corta no
+    // alcanza para evitar la repeticion, la garantia tiene que venir del motor
+    // (antes, al agotarse la ventana, podia repetir la ultima).
+    const VOCAB = {
+      responses: {
+        random: true,
+        avoidRepeat: true,
+        recent: 4,
+        contexts: {
+          ok: { label: 'ok', variants: ['SALIDA-1 {tema}', 'SALIDA-2 {tema}'], aiVariants: [] }
+        }
+      }
+    };
+    const { dom, integration, state } = loadModule({ vocabulary: VOCAB });
+    await integration.syncSpotifySettings();
+    const bloque = integration.cortexSpotifyVocabulary.responses.contexts.ok;
+    check('respuestas: el vocabulario de prueba tiene las 2 variantes', bloque.variants.length === 2, JSON.stringify(bloque));
+
+    const salidas = [];
+    for (let i = 0; i < 8; i += 1) {
+      const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:ke personajes', requester: 'Prueba' });
+      salidas.push(r && r.message);
+    }
+    check('respuestas: no repite la anterior aunque la ventana cubra todas', (() => { for (let i = 1; i < salidas.length; i += 1) { if (salidas[i] === salidas[i - 1]) return false; } return true; })(), JSON.stringify(salidas));
+    check('respuestas: y usa las dos variantes', new Set(salidas.filter(Boolean)).size === 2, JSON.stringify(salidas));
+    dom.window.close();
+  }
+
+  // ---------- Q) variedad: "un tema de X" no siempre el mismo ----------
+  {
+    // Spotify devuelve 5 temas del artista (uno repetido con otra URI): el bot elige al azar.
+    const CATALOGO = [
+      { id: 'k1', uri: 'spotify:track:k1', name: 'Uno Nunca Sabe', duration_ms: 200000, artists: [{ name: 'Ke Personajes' }], album: { name: 'A', images: [] } },
+      { id: 'k2', uri: 'spotify:track:k2', name: 'Un Finde', duration_ms: 200000, artists: [{ name: 'Ke Personajes' }], album: { name: 'A', images: [] } },
+      { id: 'k3', uri: 'spotify:track:k3', name: 'Como Olvidarme', duration_ms: 200000, artists: [{ name: 'Ke Personajes' }], album: { name: 'A', images: [] } },
+      { id: 'k4', uri: 'spotify:track:k4', name: 'Yo Tomo', duration_ms: 200000, artists: [{ name: 'Ke Personajes' }], album: { name: 'A', images: [] } },
+      { id: 'k5', uri: 'spotify:track:k5', name: 'Uno Nunca Sabe', duration_ms: 200000, artists: [{ name: 'Ke Personajes' }], album: { name: 'B', images: [] } }
+    ];
+    const MAS_CUMBIA = [
+      { id: 'c1', uri: 'spotify:track:c1', name: 'La Cumbia Del Barrio', duration_ms: 200000, artists: [{ name: 'Amar Azul' }], album: { name: 'A', images: [] } },
+      { id: 'c2', uri: 'spotify:track:c2', name: 'Yo Tomo', duration_ms: 200000, artists: [{ name: 'Amar Azul' }], album: { name: 'A', images: [] } },
+      { id: 'c3', uri: 'spotify:track:c3', name: 'El Fantasma', duration_ms: 200000, artists: [{ name: 'Amar Azul' }], album: { name: 'A', images: [] } }
+    ];
+    const { dom, integration, state } = loadModule({
+      search: consulta => (/ke personajes/i.test(consulta) ? CATALOGO : (/cumbia/i.test(consulta) ? MAS_CUMBIA : TRACK))
+    });
+    await integration.syncSpotifySettings();
+    state.settings = { ...state.settings, testMode: true };
+
+    // 1) el pedido se lee como artista y sin tema puntual
+    await integration.runDashboardSpotifyCommand({ type: 'simulate', comment: 'pasame otro tema de ke personajes', requester: 'Prueba', parseOnly: true });
+    const analisis = cortexCall(state, '/api/spotify-request-log').map(call => call.body).pop();
+    check('variedad: "otro tema de X" se lee como artista', /artista\/tema de ke personajes/i.test(analisis && analisis.message), JSON.stringify(analisis && analisis.message));
+
+    // 2) seis veces el mismo pedido -> varios temas distintos
+    const nombres = [];
+    for (let i = 0; i < 6; i += 1) {
+      const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:ke personajes', requester: 'Prueba' });
+      nombres.push(r && r.track && r.track.name);
+    }
+    check('variedad: elige entre los temas del artista', new Set(nombres).size >= 3, JSON.stringify(nombres));
+    check('variedad: no devuelve siempre el mismo (antes el primero)', nombres.some(n => n !== 'Uno Nunca Sabe'), JSON.stringify(nombres));
+    check('variedad: nunca repite dos veces seguidas', (() => { for (let i = 1; i < nombres.length; i += 1) { if (nombres[i] === nombres[i - 1]) return false; } return true; })(), JSON.stringify(nombres));
+    check('variedad: le pide mas resultados a Spotify', state.lastLimits.some(l => l >= 5), JSON.stringify(state.lastLimits.slice(0, 5)));
+    check('variedad: no cuenta dos veces el mismo tema (single + disco)', new Set(nombres.filter(Boolean)).size + 1 >= 4, JSON.stringify(nombres));
+
+    // 3) apagada -> vuelve a ser determinista (el primero de siempre)
+    state.settings = { ...state.settings, artistVariety: false };
+    await integration.syncSpotifySettings();
+    const fijos = [];
+    for (let i = 0; i < 3; i += 1) {
+      const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:ke personajes', requester: 'Prueba' });
+      fijos.push(r && r.track && r.track.name);
+    }
+    check('variedad: apagada vuelve al primero de siempre', new Set(fijos).size === 1 && fijos[0] === 'Uno Nunca Sabe', JSON.stringify(fijos));
+
+    // 4) un pedido puntual (tema + artista) sigue exacto
+    state.settings = { ...state.settings, artistVariety: true };
+    await integration.syncSpotifySettings();
+    const puntual = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'track:Costumbres artist:Damas Gratis', requester: 'Prueba' });
+    check('variedad: un pedido puntual no se toca', puntual && puntual.track && puntual.track.name === TRACK.name, JSON.stringify(puntual && puntual.track && puntual.track.name));
+
+    // 5) genero: mismo criterio (no siempre la misma cumbia)
+    const generos = [];
+    for (let i = 0; i < 4; i += 1) {
+      const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'genre:cumbia', requester: 'Prueba' });
+      generos.push(r && r.track && r.track.name);
+    }
+    check('variedad: tambien en los pedidos de genero', new Set(generos).size >= 3, JSON.stringify(generos));
+    check('variedad: en genero tampoco repite dos veces seguidas', (() => { for (let i = 1; i < generos.length; i += 1) { if (generos[i] === generos[i - 1]) return false; } return true; })(), JSON.stringify(generos));
     dom.window.close();
   }
 

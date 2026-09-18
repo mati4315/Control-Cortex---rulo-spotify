@@ -11,5 +11,7 @@
   "skipEnabled": false,
   "skipSeconds": 10,
   "pollSeconds": 7,
+  "artistVariety": true,
+  "artistVarietyPool": 20,
   "deviceTargetName": "Web Player (Chrome)"
 }

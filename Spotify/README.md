@@ -245,16 +245,48 @@ instalar nada.
 **Qué guarda (`events`)** — acciones sueltas: `ai_replies` (variantes generadas con IA),
 `vocabulary_saved` (cada cambio de entrenamiento, con los totales), `alias_learned` (correcciones).
 
+**Las canciones que puso Rulo.** Cada tema que suena queda con `track_name`, `track_artist`, `track_uri` y
+`track_source`: **`pedido`** (lo pidió alguien) o **`continuacion`** (lo puso Rulo solo, la continuación automática).
+Con eso el ranking de más pedidas distingue una cosa de la otra.
+
+**¿Les gustó? (enganche).** Si después de un tema lo **saltan** (`next`/`previous`) o lo **pausan** desde el
+dashboard, queda una fila con estado `skipped`/`paused`, el tema y `since_play_ms` (a los cuántos segundos), y el
+pedido original de ese tema se marca con `skipped_after = 1`. Así se ve qué canciones conviene evitar y qué
+respuestas acompañan mejor. El salto automático de 10 segundos **no** cuenta: es una regla configurada, no una
+decisión de la gente.
+
+**Avisos y recordatorio.** El resumen trae `avisos` (tasa de no encontradas ≥ 25 %, un mismo comentario que falla
+3+ veces, se salta demasiado, IA apagada con muchos fallos, muchas sin revisar) y `recordatorio` (cuántas
+interacciones quedan sin revisar y hace cuántos días). El panel muestra los avisos, un cartel de recordatorio y
+un chip **"Análisis: N sin revisar"** en el estado, que se apaga con *Marcar como revisado*.
+
+**Sugerencias con IA.** El botón *Sugerir mejoras con IA* manda los comentarios que no se encontraron al cerebro y
+devuelve, por cada uno, qué falló y qué cargar (`alias` para errores de escritura, `palabra` para palabras de
+pedido nuevas, `genero`, `cancion`/`artista`). Cada sugerencia se aplica con un clic: suma la corrección
+aprendida, la palabra o el género. Sin el cerebro configurado avisa y no toca nada.
+
+**Recordatorio automático (Hermes).** Hay un trabajo programado **"Rulo - recordatorio de analisis"** que corre
+**todos los lunes a las 10** y manda este resumen al chat. La lógica del resumen vive en
+`Control Cortex/tools/recordatorio-analisis.py` (se puede correr a mano:
+`python "Control Cortex/tools/recordatorio-analisis.py" 30`), y el trabajo semanal necesita el **gateway de
+Hermes** andando: `hermes gateway install` (una vez, queda autoarrancando) o `hermes gateway run`.
+
 **Cómo verlo**
 
 - En el panel de Spotify, sección **Análisis**: números del período (interacciones, pedidos,
-  reproducidas, no encontradas, con espera, con IA) + lo que pidieron y no se encontró + lo más pedido.
-- `GET /api/spotify-analytics?dias=7` → el resumen completo en JSON.
+  reproducidas, no encontradas, con espera, con IA) + lo que pidieron y no se encontró + lo más pedido +
+  las canciones que puso Rulo (con saltos) + qué se salteó + sugerencias de la IA.
+- `GET /api/spotify-analytics?dias=7` → el resumen completo en JSON (incluye `topCanciones`, `tasaSalteo`,
+  `respuestas`, `avisos` y `recordatorio`).
 - `GET /api/spotify-analytics-rows?dias=30&limite=200&estado=notfound` → las filas.
+- `GET /api/spotify-analytics-alerts?dias=7` → solo los avisos.
 - `GET /api/spotify-analytics.csv?dias=30` → **CSV** para abrirlo en Excel o Sheets y filtrar a gusto.
+- `POST /api/spotify-analytics-reviewed` → marca lo visto (apaga el recordatorio).
+- `POST /api/spotify-ai-suggest {dias}` → sugerencias de la IA para lo que no se encontró.
 
 Con eso se ve enseguida dónde mejorar: los comentarios que no se encontraron (van derecho a la lista
-de palabras/correcciones), los pedidos repetidos, los horarios y las plataformas.
+de palabras/correcciones), los pedidos repetidos, las canciones que más gustan (y las que se saltean),
+los horarios y las plataformas.
 
 > La base **no se sube** a GitHub: tiene los comentarios y los nombres del chat. Está en el `.gitignore`
 > del repo y en las exclusiones del subidor.
@@ -308,3 +340,22 @@ Los archivos, en resumen:
 | `spotify-aliases.json` | correcciones de escritura aprendidas | sí |
 | `spotify-request-log.json` | últimos 50 pedidos (lo escribe el backend) | no hace falta |
 | `spotify-devices.json` | dispositivos vistos (lo escribe el módulo) | no hace falta |
+
+## Variedad de temas (un tema de un artista, sin decir cuál)
+
+Cuando alguien pide **un artista** (o un género) sin nombrar un tema puntual
+("pasame otro tema de Ke Personajes", "poneme cumbia"), el bot **no pone siempre el
+mismo**: pide hasta 20 resultados a Spotify y los va sacando de una **bolsa mezclada
+por artista**, sin repetir ninguno hasta agotarla. Al agotarse, mezcla de nuevo
+salteando los que ya sonaron en la sesión. Los temas con el mismo nombre (el single y
+el del disco) cuentan una sola vez, así no suena "lo mismo" dos veces.
+
+- Pedido puntual ("el tema Costumbres de Damas Gratis") → sigue siendo el mejor
+  resultado de Spotify, exacto, sin azar.
+- Se apaga desde el dashboard: **Variedad de temas → elegir uno al azar**
+  (`artistVariety`, encendido de fábrica) y **cuántos resultados mirar**
+  (`artistVarietyPool`, 5 a 50, por defecto 20).
+- Los pedidos de artista no usan el caché de búsqueda (si no, siempre daría el mismo).
+- Cada elección queda en el historial: podés ver qué tema salió por cada artista en
+  **Análisis → Las canciones que puso Rulo**.
+
