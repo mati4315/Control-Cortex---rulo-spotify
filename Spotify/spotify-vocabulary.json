@@ -328,7 +328,7 @@
   "ai": {
     "enabled": false,
     "endpoint": "",
-    "model": "prueba",
+    "model": "",
     "instructions": "",
     "onlyWhenNotUnderstood": true,
     "requireSignal": true,
