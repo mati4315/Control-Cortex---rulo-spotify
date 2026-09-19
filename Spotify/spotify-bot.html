@@ -202,7 +202,14 @@
         const keep = responses.avoidRepeat !== false && recent > 0;
         const past = keep ? (history.get(contextId) || []) : [];
         let available = pool.filter(item => past.indexOf(item) === -1);
-        if (!available.length) { history.set(contextId, []); available = pool; }
+        if (!available.length) {
+          // Se agotaron las novedades: se reinicia la memoria corta, pero igual se
+          // evita repetir la ultima respuesta si hay otra opcion.
+          const ultima = past[past.length - 1];
+          history.set(contextId, []);
+          available = pool.filter(item => item !== ultima);
+          if (!available.length) available = pool;
+        }
         const chosen = available[Math.floor(Math.random() * available.length)];
         if (keep) history.set(contextId, (history.get(contextId) || []).concat([chosen]).slice(-recent));
         return chosen;

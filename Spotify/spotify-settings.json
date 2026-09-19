@@ -12,6 +12,10 @@
   "skipSeconds": 10,
   "pollSeconds": 7,
   "artistVariety": true,
-  "artistVarietyPool": 20,
+  "artistVarietyPool": 12,
+  "musicLibraryPath": "",
+  "autoBiblioteca": false,
+  "autoEsperaSegundos": 240,
+  "spotifyLocalLyrics": false,
   "deviceTargetName": "Web Player (Chrome)"
 }
