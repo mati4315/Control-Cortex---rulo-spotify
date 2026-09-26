@@ -62,6 +62,7 @@ function loadModule(options) {
     lastSearch: [],
     artistSearches: [],
     lastLimits: [],
+    lastOffsets: [],
     lastTrackById: [],
     nextCalls: 0,
     queue: [],
@@ -143,6 +144,9 @@ function loadModule(options) {
       const limite = Number((target.split('limit=')[1] || '3').split('&')[0]) || 3;
       state.lastSearch.push(q);
       state.lastLimits.push(limite);
+      const offset = Number(new URL(target).searchParams.get('offset') || 0);
+      state.lastOffsets.push(offset);
+      if (limite > 10) return emptyResponse(400);
       // Una app colgada: la respuesta nunca llega (o llega tarde). Con hangSegundos
       // se simula eso mismo, respetando la senal de cancelacion del modulo.
       if (opts.hangSegundos) {
@@ -170,8 +174,9 @@ function loadModule(options) {
       const resolver = opts.search;
       const found = typeof resolver === 'function' ? resolver(q) : TRACK;
       // El resolver puede devolver un tema, una lista de temas o nada.
-      const items = Array.isArray(found) ? found.slice(0, limite) : (found ? [found] : []);
-      return jsonResponse({ tracks: { items } });
+      const all = Array.isArray(found) ? found : (found ? [found] : []);
+      const items = all.slice(offset, offset + limite);
+      return jsonResponse({ tracks: { items, next: offset + limite < all.length ? 'next-page' : null } });
     }
     if (target.indexOf('/v1/artists/') !== -1 && target.indexOf('/top-tracks') !== -1) {
       state.topTracksCalls = (state.topTracksCalls || 0) + 1;
@@ -1224,7 +1229,28 @@ async function waitFor(predicate, timeoutMs, stepMs) {
     dom.window.close();
   }
 
-  // ---------- Resultado ----------
+  // La búsqueda del chat usa un grupo mayor que la prueba directa: ambas deben
+  // funcionar con el límite real de diez resultados y sin acceso a top-tracks.
+  {
+    const songs = Array.from({length:20}, (_, i) => ({...TRACK, id:'karina-'+i, uri:'spotify:track:karina'+i, name:'Tema Karina '+i, artists:[{id:'karina',name:'Karina'}]}));
+    const {dom, integration, state} = loadModule({artists:[{id:'karina',name:'Karina'}],topTracksStatus:403,search:()=>songs,remote:{autoContinue:false,artistVariety:true,artistVarietyPool:20}});
+    await integration.initialize();
+    const direct = await integration.runDashboardSpotifyCommand({type:'search',query:'karina',requester:'Dashboard'});
+    check('regresión Karina: búsqueda directa encuentra', direct.success === true);
+    await integration.handleCommand('quiero un tema de karina', {chatname:'Mati',type:'youtube'});
+    check('regresión Karina: pedido natural reproduce al artista', /^spotify:track:karina/.test(state.lastPlayedUri || ''), state.lastPlayedUri);
+    check('regresión Karina: todas las búsquedas respetan límite 10', state.lastLimits.every(n=>n<=10), JSON.stringify(state.lastLimits));
+    check('regresión Karina: pagina para conservar variedad 20', state.lastOffsets.includes(10), JSON.stringify(state.lastOffsets));
+    dom.window.close();
+  }
+  {
+    const {dom,integration,state} = loadModule({searchStatus:400,remote:{autoContinue:false}});
+    await integration.initialize();
+    const result=await integration.runDashboardSpotifyCommand({type:'search',query:'karina',requester:'Dashboard'});
+    check('búsqueda rechazada: informa HTTP 400 en lugar de no encontrado', !result.success && /HTTP 400/.test(result.message), result.message);
+    check('búsqueda rechazada: no malgasta consultas en variantes', state.lastSearch.length===1, state.lastSearch.length);
+    dom.window.close();
+  }
 
   // ---------- Resultado ----------
   const failed = results.filter(item => !item.ok);

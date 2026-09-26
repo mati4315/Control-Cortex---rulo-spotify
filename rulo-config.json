@@ -11,6 +11,6 @@
   "showMascot": true,
   "showBotName": false,
   "showAvatar": false,
-  "overlayTheme": "dark",
+  "overlayTheme": "light",
   "animation": "slide"
 }
