@@ -13,8 +13,8 @@
   "pollSeconds": 7,
   "artistVariety": true,
   "artistVarietyPool": 12,
-  "musicLibraryPath": "",
-  "autoBiblioteca": false,
+  "musicLibraryPath": "D:\\RADIO\\TEMAS Spotify",
+  "autoBiblioteca": true,
   "autoEsperaSegundos": 240,
   "spotifyLocalLyrics": false,
   "deviceTargetName": "Web Player (Chrome)"

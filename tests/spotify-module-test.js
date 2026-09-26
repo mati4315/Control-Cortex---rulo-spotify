@@ -60,9 +60,12 @@ function loadModule(options) {
     vocabulary: opts.vocabulary || null,
     aiInterpretation: opts.aiInterpretation || null,
     lastSearch: [],
+    artistSearches: [],
     lastLimits: [],
     lastTrackById: [],
     nextCalls: 0,
+    queue: [],
+    claimedCommands: new Set(),
     player: null,
     currentTrack: null
   };
@@ -106,6 +109,12 @@ function loadModule(options) {
     if (target.indexOf('/api/spotify-device-target') !== -1) {
       return jsonResponse({ deviceName: state.settings.deviceTargetName });
     }
+    if (target.indexOf('/api/spotify-command-claim') !== -1) {
+      const id = String(body && body.id || '');
+      const claimed = !state.claimedCommands.has(id);
+      state.claimedCommands.add(id);
+      return jsonResponse({ ok: true, claimed });
+    }
     if (target.indexOf('/api/spotify-playback-offset') !== -1) {
       return jsonResponse({ enabled: state.settings.skipEnabled, seconds: state.settings.skipSeconds });
     }
@@ -120,6 +129,15 @@ function loadModule(options) {
     }
 
     // --- Spotify Web API simulada ---
+    if (target.indexOf('/v1/search') !== -1 && target.indexOf('type=artist') !== -1) {
+      const q = decodeURIComponent((target.split('q=')[1] || '').split('&')[0]);
+      state.artistSearches.push(q);
+      if (opts.artistStatus) {
+        return Promise.resolve({ ok: false, status: opts.artistStatus, headers: { get: () => null }, json: () => Promise.resolve({ error: { status: opts.artistStatus } }) });
+      }
+      const artistas = opts.artists === undefined ? [{ id: 'a1', name: 'El Polaco' }] : opts.artists;
+      return jsonResponse({ artists: { items: artistas } });
+    }
     if (target.indexOf('/v1/search') !== -1) {
       const q = decodeURIComponent((target.split('q=')[1] || '').split('&')[0]);
       const limite = Number((target.split('limit=')[1] || '3').split('&')[0]) || 3;
@@ -154,6 +172,13 @@ function loadModule(options) {
       // El resolver puede devolver un tema, una lista de temas o nada.
       const items = Array.isArray(found) ? found.slice(0, limite) : (found ? [found] : []);
       return jsonResponse({ tracks: { items } });
+    }
+    if (target.indexOf('/v1/artists/') !== -1 && target.indexOf('/top-tracks') !== -1) {
+      state.topTracksCalls = (state.topTracksCalls || 0) + 1;
+      if (opts.topTracksStatus) {
+        return Promise.resolve({ ok: false, status: opts.topTracksStatus, headers: { get: () => null }, json: () => Promise.resolve({ error: { status: opts.topTracksStatus } }) });
+      }
+      return jsonResponse({ tracks: opts.topTracks || [] });
     }
     if (target.indexOf('/me/player/devices') !== -1) {
       const dispositivo = opts.deviceActive === false ? Object.assign({}, DEVICE, { is_active: false }) : DEVICE;
@@ -198,13 +223,26 @@ function loadModule(options) {
         const mensaje = opts.playStatus === 403 ? 'Player command failed: Restriction violated' : 'Player command failed';
         return Promise.resolve({ ok: false, status: opts.playStatus, headers: { get: () => null }, json: () => Promise.resolve({ error: { status: opts.playStatus, message: mensaje, reason: 'UNKNOWN' } }) });
       }
-      state.lastPlayedUri = (body && Array.isArray(body.uris) && body.uris[0]) || TRACK.uri;
+      if (!opts.ignoreDirectPlay) state.lastPlayedUri = (body && Array.isArray(body.uris) && body.uris[0]) || TRACK.uri;
       state.lastPlayBody = body;
       return emptyResponse(204);
     }
-    if (target.indexOf('/me/player/queue') !== -1) return emptyResponse(204);
+    if (target.indexOf('/me/player/queue') !== -1) {
+      if ((config.method || 'GET').toUpperCase() === 'POST') {
+        state.queue.unshift(decodeURIComponent((target.split('uri=')[1] || '').split('&')[0]));
+        return emptyResponse(204);
+      }
+      return jsonResponse({ queue: state.queue.map(uri => ({ uri })) });
+    }
     if (target.indexOf('/me/player/seek') !== -1) return emptyResponse(204);
-    if (target.indexOf('/me/player/next') !== -1) { state.nextCalls += 1; return emptyResponse(204); }
+    if (target.indexOf('/me/player/next') !== -1) {
+      state.nextCalls += 1;
+      if (opts.queueWorks && state.queue.length) {
+        const uri = state.queue.shift();
+        state.player = { is_playing: true, progress_ms: 0, item: { uri, name: TRACK.name }, device: DEVICE };
+      }
+      return emptyResponse(204);
+    }
     if (target.indexOf('/recommendations') !== -1) return jsonResponse({ tracks: [CONTINUATION] });
     if (target.indexOf('/me/player') !== -1) {
       if (state.player) return jsonResponse(state.player);     // estado a medida para las pruebas
@@ -426,7 +464,7 @@ async function waitFor(predicate, timeoutMs, stepMs) {
     const { dom, integration, state, sockets } = loadModule({ remote: { pollSeconds: 15 } });
     await integration.initialize();
     await wait(250);
-    check('ws: se abre el enlace con el dashboard', sockets.length === 1 && /\/api\/spotify-ws$/.test(sockets[0].url), JSON.stringify(sockets.map(socket => socket.url)));
+    check('ws: se abre el enlace con el dashboard', sockets.length === 1 && new RegExp('/api/spotify-ws\\?version=' + DECLARED_VERSION + '$').test(sockets[0].url), JSON.stringify(sockets.map(socket => socket.url)));
 
     sockets[0].open();
     await wait(80);
@@ -449,6 +487,21 @@ async function waitFor(predicate, timeoutMs, stepMs) {
     sockets[0].close();
     await wait(150);
     check('ws: al caerse el enlace queda el poll como respaldo', integration.getCortexPollMs() === 15000, integration.getCortexPollMs());
+    dom.window.close();
+  }
+
+  {
+    const { dom, integration, state, sockets } = loadModule({ remote: { pollSeconds: 1 } });
+    await integration.initialize();
+    await wait(200);
+    sockets[0].open();
+    const command = { id: 'dashboard-una-vez', type: 'devices', requester: 'Dashboard' };
+    state.extraCommands.push(command);
+    sockets[0].message({ type: 'spotify_command', command });
+    await wait(1500);
+    const reports = cortexCall(state, '/api/spotify-request-log').filter(call => call.body.query === '!spotifydevices');
+    check('ws+poll: un comando con id se ejecuta una sola vez', reports.length === 1, reports.length);
+    check('ws+poll: el backend recibe el reclamo del comando', state.claimedCommands.has(command.id));
     dom.window.close();
   }
 
@@ -782,7 +835,9 @@ async function waitFor(predicate, timeoutMs, stepMs) {
 
     const salidas = [];
     for (let i = 0; i < 8; i += 1) {
-      const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:ke personajes', requester: 'Prueba' });
+      // Pedido puntual (no de artista): la rotacion de respuestas no depende de eso
+      // y asi la prueba no choca con el filtro "solo temas del artista pedido".
+      const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'Amar Azul Yo Tomo Licor', requester: 'Prueba' });
       salidas.push(r && r.message);
     }
     check('respuestas: no repite la anterior aunque la ventana cubra todas', (() => { for (let i = 1; i < salidas.length; i += 1) { if (salidas[i] === salidas[i - 1]) return false; } return true; })(), JSON.stringify(salidas));
@@ -1003,6 +1058,16 @@ async function waitFor(predicate, timeoutMs, stepMs) {
     dom.window.close();
   }
   {
+    const { dom, integration, state } = loadModule({ ignoreDirectPlay: true, queueWorks: true });
+    state.player = { is_playing: true, progress_ms: 12000, item: { uri: 'spotify:track:anterior', name: 'Tema anterior' }, device: DEVICE };
+    await integration.initialize();
+    const result = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'Amar Azul Yo Tomo Licor', requester: 'Mati' });
+    check('reproducir: si play no cambia la app, encola y avanza al tema pedido',
+      result && result.success === true && state.nextCalls === 1 && state.player.item.uri === TRACK.uri,
+      JSON.stringify({ result: result && result.message, nextCalls: state.nextCalls, player: state.player }));
+    dom.window.close();
+  }
+  {
     const { dom, integration, state } = loadModule({ playStatus: 404 });
     await integration.initialize();
     // El reproductor esta en otro tema: el fallo no se puede confundir con "ya suena".
@@ -1058,6 +1123,104 @@ async function waitFor(predicate, timeoutMs, stepMs) {
     await wait(200);
     const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'Amar Azul Yo Tomo Licor', requester: 'Mati' });
     check('restringido: pedir el tema que ya suena cuenta como exito', r && r.success === true, JSON.stringify(r && r.message));
+    dom.window.close();
+  }
+
+  // ---------- N) pedido de artista: catalogo real, filtro y fallos transitorios ----------
+  {
+    // El caso reportado: "un tema del polaco" devolvia "Beautiful - Tan Bionica".
+    // El catalogo del artista resuelto tiene que ganar siempre.
+    const EL_POLACO = { id: 'p1', uri: 'spotify:track:p1', name: 'Vengo de la casa de ella', duration_ms: 200000, artists: [{ name: 'El Polaco' }] };
+    const BASURA = { id: 'b1', uri: 'spotify:track:b1', name: 'Beautiful', duration_ms: 200000, artists: [{ name: 'Tan Bionica' }] };
+    const { dom, integration, state } = loadModule({
+      artists: [{ id: 'a1', name: 'El Polaco' }],
+      topTracks: [EL_POLACO],
+      search: () => [BASURA]
+    });
+    await integration.initialize();
+    await wait(200);
+    const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:polaco', requester: 'Mati' });
+    check('artista: resuelve el nombre real con la busqueda de artistas', state.artistSearches.length >= 1, JSON.stringify(state.artistSearches));
+    check('artista: usa el catalogo real del artista', (state.topTracksCalls || 0) >= 1, String(state.topTracksCalls));
+    check('artista: elige un tema del artista pedido', r && r.success === true && /El Polaco/.test(String(r.track && r.track.artist)), JSON.stringify(r && r.track));
+    check('artista: nunca elige basura de otro artista', !/Tan Bionica/.test(String(r.track && r.track.artist)), JSON.stringify(r && r.track));
+    dom.window.close();
+  }
+  {
+    // Si todo lo que devuelve Spotify es de otros artistas, NO se reproduce: mejor
+    // decir que no se encontro que poner una cancion que nadie pidio.
+    const BASURA = { id: 'b1', uri: 'spotify:track:b1', name: 'Beautiful', duration_ms: 200000, artists: [{ name: 'Tan Bionica' }] };
+    const { dom, integration, state } = loadModule({
+      artists: [{ id: 'a1', name: 'El Polaco' }],
+      topTracks: [],
+      search: () => [BASURA]
+    });
+    await integration.initialize();
+    await wait(200);
+    const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:polaco', requester: 'Mati' });
+    check('artista: con solo basura no reproduce nada (avisa)', r && r.success === false, JSON.stringify(r && r.message));
+    check('artista: y no eligio la basura', !/Tan Bionica/.test(JSON.stringify(r && r.track)), JSON.stringify(r && r.track));
+    dom.window.close();
+  }
+  {
+    // Un fallo del buscador de artistas es transitorio: NO se cachea, el proximo
+    // pedido lo vuelve a intentar (era el bug: quedaba roto toda la sesion).
+    const TEMA = { id: 'z1', uri: 'spotify:track:z1', name: 'Un Tema', duration_ms: 200000, artists: [{ name: 'Alguien' }] };
+    const { dom, integration, state } = loadModule({ artistStatus: 500, artists: [{ id: 'a1', name: 'El Polaco' }], search: () => [TEMA] });
+    await integration.initialize();
+    await wait(200);
+    await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:polaco', requester: 'Mati' });
+    const primeraVez = state.artistSearches.length;
+    await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:polaco', requester: 'Mati' });
+    check('artista: un fallo transitorio no se cachea (se reintenta)', state.artistSearches.length > primeraVez, 'antes ' + primeraVez + ', ahora ' + state.artistSearches.length);
+    dom.window.close();
+  }
+
+  {
+    // N) bis - El filtro del campo en la busqueda: MEDIDO CONTRA LA API REAL, Spotify
+    // devuelve 0 resultados para "artist:Ke Personajes" y para "genre:cumbia", y encuentra
+    // bien con el texto pelado. Por eso ningun intento puede llevar el prefijo, ni siquiera
+    // el respaldo cuando el catalogo real del artista no responde (era el bug: 32 pedidos
+    // de artista en la base, 0 reproducciones).
+    const KE = { id: 'k1', uri: 'spotify:track:k1', name: 'Pobre Corazon - En Vivo', duration_ms: 200000, artists: [{ name: 'Ke Personajes' }] };
+    const { dom, integration, state } = loadModule({
+      artists: [{ id: 'a1', name: 'Ke Personajes' }],
+      topTracks: [],
+      search: q => (String(q).indexOf('artist:') === -1 ? [KE] : [])
+    });
+    await integration.initialize();
+    await wait(200);
+    const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:ke personajes', requester: 'Mati' });
+    check('campo: sin catalogo real igual encuentra al artista (busca el nombre, no "artist:")',
+      r && r.success === true && /Ke Personajes/.test(String(r.track && r.track.artist)),
+      JSON.stringify({ track: r && r.track, busquedas: state.lastSearch }));
+    check('campo: ninguna busqueda se apoya en "artist:" (Spotify lo ignora)',
+      state.lastSearch.length > 0 && state.lastSearch.every(q => String(q).indexOf('artist:') === -1),
+      JSON.stringify(state.lastSearch));
+    const r2 = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'genre:cumbia', requester: 'Mati' });
+    check('campo: tampoco el genero se busca con "genre:"',
+      state.lastSearch.every(q => String(q).indexOf('genre:') === -1),
+      JSON.stringify(state.lastSearch));
+    check('campo: y el genero encuentra tema', r2 && r2.success === true, JSON.stringify(r2 && r2.message));
+    dom.window.close();
+  }
+  {
+    // Con el vocabulario REAL del proyecto (el que edita el dashboard) el orden de intentos
+    // tiene que empezar por el texto pelado: si el vocabulario crece, las variantes no
+    // pueden empujar afuera al unico intento que funciona.
+    const VERO = JSON.parse(require('fs').readFileSync('D:/plugins para mi OBS/Rulo/Spotify/spotify-vocabulary.json', 'utf8'));
+    const KE = { id: 'k1', uri: 'spotify:track:k1', name: 'Pobre Corazon - En Vivo', duration_ms: 200000, artists: [{ name: 'Ke Personajes' }] };
+    const { dom, integration, state } = loadModule({
+      artists: [{ id: 'a1', name: 'Ke Personajes' }],
+      topTracks: [],
+      vocabulary: VERO,
+      search: q => (String(q).indexOf('artist:') === -1 ? [KE] : [])
+    });
+    await integration.initialize();
+    await wait(200);
+    const r = await integration.runDashboardSpotifyCommand({ type: 'play', query: 'artist:ke personajes', requester: 'Mati' });
+    check('campo: con el vocabulario real tambien encuentra', r && r.success === true, JSON.stringify(state.lastSearch));
+    check('campo: y gasta una sola busqueda (no cuatro)', state.lastSearch.length <= 2, JSON.stringify(state.lastSearch));
     dom.window.close();
   }
 

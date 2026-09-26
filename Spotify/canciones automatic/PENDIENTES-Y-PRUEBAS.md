@@ -1,10 +1,10 @@
 # Pendientes y pruebas — biblioteca musical de Rulo
 
 **Fecha:** 19 de septiembre de 2026
-**Versión del módulo: v37** (la extensión tiene que estar recargada; si el chip dice v32/v33, en `brave://extensions` → Actualizar).
+**Versión del módulo: v39** (la extensión tiene que estar recargada; si el chip dice v32/v33, en `brave://extensions` → Actualizar).
 
-**Estado verificado ahora mismo:** extensión conectada en **v32**, backend corriendo en el puerto 4000, biblioteca con **1 fila** (la de prueba de letras: Maná, `offline = 0`), carpeta de música **vacía**, modo automático **apagado**.
-**Código:** Fases 1 a 5 completas — **639 pruebas OK**. Nada más que implementar en esas fases.
+**Estado verificado ahora mismo:** extensión conectada en **v37** (recargala para pasar a **v39**, que trae el arreglo final de los pedidos de artista), backend corriendo en el puerto 4000, dispositivo configurado en **`Web Player (Chrome)`** (decisión del 19-sep: se usa el Spotify del navegador, que responde siempre), biblioteca con **1 fila** (la de prueba de letras: Maná, `offline = 0`), carpeta de música **vacía**, modo automático **apagado**.
+**Código:** Fases 1 a 5 completas, **674 pruebas OK** (14 archivos). Nada más que implementar en esas fases.
 
 Este documento es la lista de lo que **falta probar en vivo** y de lo que queda **pendiente**. Los ítems están ordenados: primero lo que destraba todo, después lo opcional.
 
@@ -17,7 +17,8 @@ Este documento es la lista de lo que **falta probar en vivo** y de lo que queda 
 - [ ] **Abrir el dashboard**: `http://127.0.0.1:4000/rulo-spotify.html`
   - Debería verse la sección nueva **"Biblioteca local"** arriba de "Variedad de temas".
   - *Si no aparece:* recargá con Ctrl+F5 (el navegador puede tener la página vieja en caché).
-- [ ] **Extensión**: en `brave://extensions` debería decir **v32**. Ya está conectada y reportando v32, así que este punto está ✅.
+- [x] **Extensión**: en `brave://extensions` dice **v37** ✅ (verificado, conectada).
+- [ ] **Pestaña del navegador**: dejá abierta (y **pinned**) la pestaña de `open.spotify.com` con música sonando. El `Web Player` **solo existe como dispositivo mientras esa pestaña está abierta y activa**; si Chrome la duerme o la cierra, el bot contesta "no aparece el dispositivo". Para que no la duerma: *Configuración → Rendimiento* → desactivar el ahorro de memoria para `open.spotify.com` (o dejar la música sonando, que ya impide que se duerma).
 - [ ] Backend corriendo: si el dashboard no carga nada, arrancá tu `.bat` de siempre.
 
 ### 1.2 Biblioteca: escanear y analizar (con tus propios archivos)
@@ -95,7 +96,7 @@ curl -s "http://127.0.0.1:4000/api/letras-estado"
 
 ## 2. Pendientes de infraestructura (no dependen del código)
 
-- [ ] **Recordatorio de los lunes.** El trabajo está creado y probado (`Rulo - recordatorio de analisis`, lunes 10:00, corre `Control Cortex/tools/recordatorio-analisis.py`), pero **no dispara porque el gateway de Hermes está apagado**.
+- [x] **Recordatorio de los lunes.** ✅ **HECHO (19-sep)**: el gateway quedó instalado como **tarea programada de Windows** (`Hermes_Gateway`, arranca solo al iniciar sesión) y **corriendo ahora mismo**. El trabajo `Rulo - recordatorio de analisis` (lunes 10:00, `Control Cortex/tools/recordatorio-analisis.py`) ya dispara solo.
 
 ```bash
 hermes gateway install     # queda arrancando solo al iniciar sesión (una vez)
@@ -103,17 +104,33 @@ hermes gateway install     # queda arrancando solo al iniciar sesión (una vez)
 hermes gateway run
 ```
 
-- [ ] **Default global del modelo.** Sigue apuntando a un Gemini que devuelve HTTP 404, así que cualquier tarea nueva (cron o subagente) se cae si no le fijo el modelo a mano. Se arregla con:
+- [x] **Default global del modelo.** ✅ **HECHO (19-sep)**: quedó en `deepseek-flash` con proveedor `deepseek` (antes apuntaba a un Gemini que devolvía HTTP 404, y por eso cualquier tarea nueva sin modelo fijo se caía). Verificado con `hermes config get model.default`. Los comandos quedan por si alguna vez hay que repetirlo:
 
 ```bash
 hermes config set model.default deepseek-flash
 hermes config set model.provider deepseek
 ```
 
-- [ ] **Subir a GitHub.** Nada de la biblioteca (6 módulos nuevos, 4 archivos de prueba, la guía y el informe) está en `mati4315/Control-Cortex---rulo-spotify` todavía. Se hace con `SUBIR Rulo a GitHub.bat` o `node "Control Cortex/tools/subir-rulo.js"`.
+- [x] **Subir a GitHub.** ✅ **HECHO (19-sep)**: commit **`8e23316`** (27 archivos: biblioteca, tests, guía, informe, herramienta de diagnóstico y los arreglos del bot) ya está en `mati4315/Control-Cortex---rulo-spotify` y verificado contra la API de GitHub.
   - Recordá: **la base `spotify-analytics.db` no se sube** (tiene comentarios y nombres del chat) — ya está excluida.
 
 ---
+
+### Privacidad: el subidor tenía un agujero (cerrado el 19-sep)
+
+Antes de subir, el `--estado` mostró que iba a publicar **`Spotify/spotify-analytics.db.backup-2026-09-19T02-27-39-036`**:
+un backup de la base con los comentarios y nombres del chat. Las exclusiones listaban el archivo, `-wal` y `-shm`
+**por nombre exacto**, así que cualquier variante con fecha se colaba.
+
+Dos arreglos, en `Control Cortex/tools/subir-rulo.js`:
+
+1. La exclusión ahora es un **comodín**: `Spotify/spotify-analytics.db*` cubre la base y todo lo que se derive
+   (backups, `-wal`, `-shm`).
+2. **El clon temporal se limpia antes de copiar** (`git reset --hard` + `git clean -fdx`). Antes, un archivo
+   excluido en una corrida vieja quedaba *staged* y se subía igual aunque ya no correspondiera.
+
+Verificado: la lista de subida ya no lo incluye, el escaneo de secretos no encontró nada, y **la API de GitHub
+confirma que el repo no tiene ningún archivo de la base**.
 
 ## 3. Fase 6 (letras de la caché de Spotify) — puerta de entrada
 
@@ -313,6 +330,61 @@ Lo correcto es **confirmar el estado y darlo por hecho**.
 
 Lo mismo en la reproducción: si pedís un tema que **ya está sonando** y Spotify contesta 403, se confirma el
 estado y se da por hecho.
+
+### "Un tema de X" traía un tema de OTRO artista (o decía que no existía)
+
+**Qué pasaba (20:29, reproducido):** el pedido `un tema del polaco` se convertía en la búsqueda
+`artist:polaco`, y Spotify **no usa ese campo como filtro**: es una búsqueda por palabras. Resultado real:
+
+| Pedido | Búsqueda que mandaba | Qué devolvía |
+| --- | --- | --- |
+| un tema **del polaco** | `artist:polaco` | ✗ **Beautiful - Tan Bionica** (nada que ver), o "no está en Spotify" |
+| un tema **de el polaco** | `artist:el polaco` | ✓ Vengo de la casa de ella - **El Polaco** |
+| un tema de ke personajes | `artist:ke personajes` | ✓ (funcionaba porque el nombre coincide entero) |
+
+O sea: **el nombre real del artista lleva el artículo** ("El Polaco") y sin él Spotify devuelve cualquier cosa,
+y el bot **no revisaba que el resultado fuera de ese artista** — elegía lo que viniera.
+
+**Cómo se arregló (v38):** cuando el pedido es de un artista, el bot ahora:
+
+1. **Resuelve el nombre real** con una búsqueda de artistas (`type=artist`): `polaco` → **`El Polaco`**;
+2. busca los temas con el **nombre completo** (`artist:"El Polaco"`);
+3. **descarta todo lo que no sea de ese artista** (por eso la basura ya no puede salir);
+4. guarda la bolsa de variedad con el **nombre resuelto**, así "del polaco" y "de el polaco" comparten la
+   misma bolsa y sigue habiendo variedad.
+
+Si el artista no se puede resolver, sigue el camino de siempre: **nada de lo que ya funcionaba se rompió**.
+Las pruebas cubren el caso exacto reportado (que elija a El Polaco y **nunca** a Tan Bionica) y que el camino
+viejo siga andando cuando no hay resolución.
+
+### OJO con "Simular un comentario del chat"
+
+Ese cuadro espera **solo el comentario**, como si lo hubiera escrito alguien:
+
+```text
+quiero un tema de ke personajes
+```
+
+Si pegás el texto copiado del panel del historial (que incluye "Matias Moreira comentó facebook 08:39:58 p. m.
+… Rulo responde …"), el bot lo lee como un comentario gigante y contesta "no encontré ese tema" — **no es un
+fallo, es que le llegó basura**. Verificado en la base: el comentario que entró era exactamente ese texto
+pegado, y el bot buscó `track:en spotify. artist:ke personajes…`.
+
+### El arreglo de los pedidos de artista, segunda vuelta (v39)
+
+La v38 (resolver el nombre real + filtrar) **no alcanzó**: seguía devolviendo `Beautiful - Tan Bionica` para
+"un tema del polaco". La razón, encontrada en los datos: **el resultado de la búsqueda de artistas se
+cacheaba aunque hubiera fallado**. Un error transitorio de Spotify (429, 5xx, corte) dejaba esa búsqueda
+"no resuelta" **para toda la sesión**, así que el bot volvía al camino viejo (que devuelve cualquier cosa).
+
+La v39 lo hace bien:
+
+1. **No se cachea un fallo**: si la búsqueda de artistas no responde, el próximo pedido la reintenta.
+2. **Se usa el catálogo real del artista** (`/v1/artists/<id>/top-tracks`), que es lo que Spotify conoce de
+   él; la búsqueda por nombre queda como respaldo.
+3. **Red de seguridad**: si lo que devuelve Spotify no es de ese artista, **no se reproduce** — mejor decir
+   "no encontré" que poner una canción que nadie pidió (antes salía Tan Bionica para el Polaco).
+4. Cada paso queda en el log de la extensión (`artistas para "polaco": ...`, `catálogo de El Polaco: N temas`).
 
 ### Los estados en la base (para leer el historial de un vistazo)
 
